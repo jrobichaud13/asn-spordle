@@ -65,50 +65,20 @@ const cleanName = s => s.replace(/^\p{Lu}\s+(?=\S+\s+\S)/u, '').trim();
 async function scrapeLeague(browser, L) {
   const page = await browser.newPage();
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36');
+  // Spordle's own page code fetches stats with its own session headers. We note those headers (inside the page) so the
+  // page can fetch other leagues' stats the same way. Nothing leaves the page.
+  await page.evaluateOnNewDocument(() => {
+    window.__sp = {};
+    const so = XMLHttpRequest.prototype.setRequestHeader, op = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (m, u) { this.__u = String(u); return op.apply(this, arguments); };
+    XMLHttpRequest.prototype.setRequestHeader = function (k, v) { if (/pub-api\.play\.spordle/.test(this.__u || '')) window.__sp[k] = v; return so.apply(this, arguments); };
+    const of = window.fetch;
+    window.fetch = function (i, o) { try { const u = (i && i.url) || String(i); const H = (o && o.headers) || (i && i.headers);
+      if (/pub-api\.play\.spordle/.test(u) && H) { if (H.forEach && !Array.isArray(H)) H.forEach((v, k) => window.__sp[k] = v); else Object.assign(window.__sp, H); } } catch (e) {} return of.apply(this, arguments); };
+  });
   const base = `${L.org}/schedule-stats-standings/${L.categoryId}?categoryId=${L.categoryId}&scheduleId=${L.scheduleId}`;
   const meta = { league: L.short, leagueName: L.name, division: L.division, region: L.region };
   const out = { games: [], standings: [], skaters: [], goalies: [] };
-
-  // Standings / skaters / goalies: read the tables on the stats page (looked up by column name)
-  const grab = async (tab, need) => {
-    const all = await tableRows(page, base + '&tab=' + tab);
-    const hdr = (all[0] || []).map(h => h.toUpperCase());
-    if (!need.every(k => hdr.includes(k))) throw new Error(`unexpected columns on ${tab}: ${hdr.join('|')}`);
-    return { hdr, rows: all.slice(1), ix: k => hdr.indexOf(k) };
-  };
-  try {
-    const { rows, ix } = await grab('standings', ['TEAM', 'GP', 'PTS']);
-    for (const r of rows) {
-      if (r.length < 5 || !r[ix('TEAM')]) continue;
-      const g = k => (ix(k) >= 0 ? n(r[ix(k)]) : 0);
-      out.standings.push({ ...meta, team: r[ix('TEAM')], gp: g('GP'), w: g('W'), otw: g('OTW'), sow: g('SOW'),
-        t: g('T'), l: g('L'), otl: g('OTL'), sol: g('SOL'), gf: g('GF'), ga: g('GA'), pts: g('PTS') });
-    }
-    console.log('  standings', out.standings.length);
-  } catch (e) { console.error('  standings failed:', e.message); }
-
-  try {
-    const { rows, ix } = await grab('playerstats', ['NAME', 'TEAM', 'GP', 'G', 'A']);
-    for (const r of rows) {
-      if (r.length < 6 || !r[ix('NAME')]) continue;
-      const g = k => (ix(k) >= 0 ? n(r[ix(k)]) : 0);
-      out.skaters.push({ league: L.short, name: cleanName(r[ix('NAME')]), team: r[ix('TEAM')], pos: '', number: '',
-        gp: g('GP'), g: g('G'), a: g('A'), pts: ix('P') >= 0 ? g('P') : g('G') + g('A'), ppg: g('PPG'), shg: g('SHG'), pim: g('PIM') });
-    }
-    console.log('  skaters', out.skaters.length);
-  } catch (e) { console.error('  skaters failed:', e.message); }
-
-  try {
-    const { rows, ix } = await grab('goaliestats', ['NAME', 'TEAM', 'GP', 'GAA']);   // GAA column proves it is the goalie table
-    for (const r of rows) {
-      if (r.length < 6 || !r[ix('NAME')]) continue;
-      const g = k => (ix(k) >= 0 ? n(r[ix(k)]) : 0);
-      const sv = ix('SV%') >= 0 ? g('SV%') : (ix('SVP') >= 0 ? g('SVP') : 0);
-      out.goalies.push({ league: L.short, name: cleanName(r[ix('NAME')]), team: r[ix('TEAM')], gp: g('GP'), w: g('W'), l: g('L'),
-        so: g('SO'), ga: g('GA'), mins: g('MIN'), gaa: g('GAA'), svpct: sv, shots: g('SA') || g('SOG'), saves: g('SV') });
-    }
-    console.log('  goalies', out.goalies.length);
-  } catch (e) { console.error('  goalies failed:', e.message); }
 
   // Games: the league home page scoreboard (upcoming from page data, finals from the cards)
   try {
@@ -143,6 +113,42 @@ async function scrapeLeague(browser, L) {
     }
     console.log('  games', out.games.length);
   } catch (e) { console.error('  games failed:', e.message); }
+
+
+  // Standings / skaters / goalies: asked from inside Spordle's own home page (the stats pages are behind the security check)
+  try {
+    if (!(await page.evaluate(() => Object.keys(window.__sp || {}).length))) { await sleep(5000); }
+    const API = 'https://pub-api.play.spordle.com/api/sp/schedules/' + L.scheduleId;
+    const raw = await page.evaluate(async (API) => {
+      const H = Object.assign({}, window.__sp || {});
+      if (!H.Authorization && !H.authorization) return { error: 'page did not expose its session' };
+      const get = async (path, f) => { const r = await fetch(API + path + '?filter=' + encodeURIComponent(JSON.stringify(f)), { headers: H });
+        return r.ok ? r.json() : { __err: r.status }; };
+      return {
+        team: await get('/teamStats', { where: { team: { name: { neq: 'TBA' } } }, include: ['team', 'group'] }),
+        skater: await get('/skaterStats', { include: ['participant', 'team'], order: 'ranking ASC' }),
+        goalie: await get('/goalieStats', { include: ['participant', 'team'], order: 'ranking ASC' }),
+      };
+    }, API);
+    if (raw.error) throw new Error(raw.error);
+    const nm = r => (r.participant && (r.participant.fullName || `${r.participant.firstName || ''} ${r.participant.lastName || ''}`.trim())) || '';
+    const tm = r => (r.team && (r.team.shortName || r.team.name)) || '';
+    if (Array.isArray(raw.team)) {
+      raw.team.sort((x, y) => (n(x.ranking) || 999) - (n(y.ranking) || 999));
+      for (const r of raw.team) out.standings.push({ ...meta, team: tm(r), gp: n(r.gamesPlayed), w: n(r.wins), otw: n(r.otw), sow: n(r.sow),
+        t: n(r.ties), l: n(r.losses), otl: n(r.otl), sol: n(r.sol), gf: n(r.goalFor), ga: n(r.goalAgainst), pts: n(r.points) });
+    } else console.error('  standings failed: HTTP', raw.team.__err);
+    if (Array.isArray(raw.skater)) {
+      for (const r of raw.skater) out.skaters.push({ league: L.short, name: nm(r), team: tm(r), pos: Array.isArray(r.positions) ? r.positions.join('/') : '',
+        number: String(r.number || ''), gp: n(r.gamesPlayed), g: n(r.goals), a: n(r.assists), pts: n(r.points), ppg: n(r.powerplayGoals), shg: n(r.shorthandedGoals), pim: n(r.pim) });
+    } else console.error('  skaters failed: HTTP', raw.skater.__err);
+    if (Array.isArray(raw.goalie)) {
+      for (const r of raw.goalie) { const shots = n(r.shots), ga = n(r.goalAgainst); if (n(r.gamesPlayed) < 1) continue;
+        out.goalies.push({ league: L.short, name: nm(r), team: tm(r), gp: n(r.gamesPlayed), w: n(r.wins), l: n(r.losses), so: n(r.shutouts),
+          ga, mins: n(r.minutesPlayed), gaa: n(r.gaa), svpct: n(r.savePercentage), shots, saves: shots > 0 ? Math.max(0, shots - ga) : 0 }); }
+    } else console.error('  goalies failed: HTTP', raw.goalie.__err);
+    console.log('  standings', out.standings.length, 'skaters', out.skaters.length, 'goalies', out.goalies.length);
+  } catch (e) { console.error('  stats failed:', e.message); }
 
   await page.close();
   return out;
