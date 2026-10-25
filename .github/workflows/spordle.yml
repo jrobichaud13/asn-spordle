@@ -1,0 +1,29 @@
+name: Spordle scraper
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'      # every 10 minutes (GitHub's minimum is 5)
+  workflow_dispatch:             # lets you press "Run workflow" by hand to test
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install Puppeteer
+        run: npm install puppeteer
+      - name: Run the Spordle scraper
+        run: node spordle_scraper.js
+      - name: Upload spordle.json to Web Hosting Canada
+        env:
+          FTP_HOST: ${{ secrets.FTP_HOST }}
+          FTP_USER: ${{ secrets.FTP_USER }}
+          FTP_PASS: ${{ secrets.FTP_PASS }}
+        run: |
+          curl --fail --silent --show-error --ssl --ftp-create-dirs \
+            -T spordle.json --user "$FTP_USER:$FTP_PASS" \
+            "ftp://$FTP_HOST/public_html/asn/data/spordle.json"
