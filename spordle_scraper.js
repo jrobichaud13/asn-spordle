@@ -37,6 +37,15 @@ const LEAGUES = [{
 }];
 
 const MON = {JAN:1,FEB:2,MAR:3,APR:4,MAY:5,JUN:6,JUL:7,AUG:8,SEP:9,OCT:10,NOV:11,DEC:12};
+
+// Spordle start times are UTC ("...T21:30:00.000Z"); the league pages show Atlantic time, so convert.
+function atlanticParts(iso, fallbackDate) {
+  const d = new Date(iso);
+  if (!iso || isNaN(d)) return { date: fallbackDate, time: '' };
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Halifax', hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).formatToParts(d).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
+}
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const n = v => { const x = parseFloat(v); return Number.isFinite(x) ? x : 0; };
 
@@ -75,8 +84,9 @@ async function scrapeLeague(browser, L) {
       const hs = (m.teamStats || []).find(t => t.teamId === m.homeTeamId);
       const as = (m.teamStats || []).find(t => t.teamId === m.awayTeamId);
       const scored = hs && as && hs.goals != null;
-      out.games.push({ id: `${L.id}-${m.id}`, gameNumber: String(m.id), date: m.date,
-        time: (m.startTime || '').slice(11, 16), venue: '', ...meta,
+      const local = atlanticParts(m.startTime, m.date);
+      out.games.push({ id: `${L.id}-${m.id}`, gameNumber: String(m.id), date: local.date,
+        time: local.time, venue: '', ...meta,
         awayTeam: m.awayTeam.shortName, homeTeam: m.homeTeam.shortName,
         awayScore: scored ? as.goals : null, homeScore: scored ? hs.goals : null,
         status: scored ? 'final' : 'scheduled' });
