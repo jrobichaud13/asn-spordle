@@ -1,6 +1,6 @@
 /**
  * ASN Spordle scraper (Puppeteer) - NB U13 AAA Male
- * Output: spordle.json  { scrapedAt, source, leagues, games[], standings[], skaters[], goalies[] }
+ * Output: spordle_games.json  { scrapedAt, source, leagues, games[], standings[], skaters[], goalies[] }
  * Same field names as grayjay.json / ryna.json.
  *
  * Run:  npm i puppeteer   then   node spordle_scraper.js
@@ -60,42 +60,6 @@ async function scrapeLeague(browser, L) {
   const meta = { league: L.short, leagueName: L.name, division: L.division, region: L.region };
   const out = { games: [], standings: [], skaters: [], goalies: [] };
 
-  // Standings: # | TEAM | GP | W | RW | OTW | SOW | T | L | RL | OTL | SOL | PTS
-  try {
-    const all = await tableRows(page, base + '&tab=standings');
-    const hdr = (all[0] || []).map(h => h.toUpperCase());
-    const ix = k => hdr.indexOf(k);      // some leagues show extra columns (GF, GA, ...), so look columns up by name
-    for (const r of all.slice(1)) {
-      if (r.length < 13) continue;
-      out.standings.push({ ...meta, team: r[ix('TEAM')], gp: n(r[ix('GP')]), w: n(r[ix('W')]), otw: n(r[ix('OTW')]), sow: n(r[ix('SOW')]),
-        t: n(r[ix('T')]), l: n(r[ix('L')]), otl: n(r[ix('OTL')]), sol: n(r[ix('SOL')]),
-        gf: ix('GF') >= 0 ? n(r[ix('GF')]) : 0, ga: ix('GA') >= 0 ? n(r[ix('GA')]) : 0, pts: n(r[ix('PTS')]) });
-    }
-    console.log('  standings', out.standings.length);
-  } catch (e) { console.error('  standings failed:', e.message); }
-
-  // Skaters: # | NAME | TEAM | GP | G | A | P | PIM
-  try {
-    const rows = (await tableRows(page, base + '&tab=playerstats')).slice(1);
-    for (const r of rows) {
-      if (r.length < 8) continue;
-      out.skaters.push({ league: L.short, name: cleanName(r[1]), team: r[2], pos: '', number: '',
-        gp: n(r[3]), g: n(r[4]), a: n(r[5]), pts: n(r[6]), ppg: 0, shg: 0, pim: n(r[7]) });
-    }
-    console.log('  skaters', out.skaters.length);
-  } catch (e) { console.error('  skaters failed:', e.message); }
-
-  // Goalies: # | NAME | TEAM | GP | W | L | T | OTL | SO | GAA
-  try {
-    const rows = (await tableRows(page, base + '&tab=goaliestats')).slice(1);
-    for (const r of rows) {
-      if (r.length < 10) continue;
-      out.goalies.push({ league: L.short, name: cleanName(r[1]), team: r[2], gp: n(r[3]), w: n(r[4]),
-        l: n(r[5]), so: n(r[8]), ga: 0, mins: 0, gaa: n(r[9]), svpct: 0, shots: 0, saves: 0 });
-    }
-    console.log('  goalies', out.goalies.length);
-  } catch (e) { console.error('  goalies failed:', e.message); }
-
   // Games: the league home page scoreboard (upcoming from page data, finals from the cards)
   try {
     await page.goto(L.org, { waitUntil: 'networkidle2', timeout: 60000 });
@@ -145,7 +109,7 @@ async function scrapeLeague(browser, L) {
   await browser.close();
   merged.skaters.sort((a, b) => b.pts - a.pts || b.g - a.g);
   merged.goalies.sort((a, b) => a.gaa - b.gaa);
-  fs.writeFileSync('spordle.json', JSON.stringify(merged, null, 2));
-  console.log(`Wrote spordle.json: ${merged.games.length} games, ${merged.standings.length} standings, ${merged.skaters.length} skaters, ${merged.goalies.length} goalies`);
-  if (!merged.standings.length && !merged.skaters.length) process.exit(1);
+  fs.writeFileSync('spordle_games.json', JSON.stringify(merged, null, 2));
+  console.log(`Wrote spordle_games.json: ${merged.games.length} games, ${merged.standings.length} standings, ${merged.skaters.length} skaters, ${merged.goalies.length} goalies`);
+  if (!merged.games.length) process.exit(1);
 })();
