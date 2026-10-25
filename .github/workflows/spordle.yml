@@ -26,4 +26,4 @@ jobs:
         run: |
           curl --fail --silent --show-error --ssl --ftp-create-dirs \
             -T spordle.json --user "$FTP_USER:$FTP_PASS" \
-            "ftp://$FTP_HOST/public_html/asn/data/spordle.json"
+            "ftp://$FTP_HOST/spordle.json"
