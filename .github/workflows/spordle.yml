@@ -18,12 +18,12 @@ jobs:
         run: npm install puppeteer
       - name: Run the Spordle scraper
         run: node spordle_scraper.js
-      - name: Upload spordle.json to Web Hosting Canada
+      - name: Upload spordle_games.json to Web Hosting Canada
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASS: ${{ secrets.FTP_PASS }}
         run: |
           curl --fail --silent --show-error --ssl --ftp-create-dirs \
-            -T spordle.json --user "$FTP_USER:$FTP_PASS" \
-            "ftp://$FTP_HOST/spordle.json"
+            -T spordle_games.json --user "$FTP_USER:$FTP_PASS" \
+            "ftp://$FTP_HOST/spordle_games.json"
